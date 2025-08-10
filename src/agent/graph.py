@@ -18,6 +18,11 @@ from langgraph.graph import StateGraph
 # 環境変数を読み込み
 load_dotenv()
 
+# LangSmith 추적 활성화
+os.environ["LANGCHAIN_TRACING_V2"] = "true"
+os.environ["LANGCHAIN_ENDPOINT"] = "https://api.smith.langchain.com"
+os.environ["LANGCHAIN_PROJECT"] = os.getenv("LANGSMITH_PROJECT", "new-agent")
+
 class Configuration(TypedDict):
     """エージェントの設定可能なパラメータ
     
@@ -66,6 +71,22 @@ async def get_weather_info(state: State, config: RunnableConfig) -> Dict[str, An
         }
         
         response = requests.get(url, params=params, timeout=10)
+        
+        # APIキーの検証
+        if response.status_code == 401:
+            return {
+                "error": "APIキーが無効です。OpenWeatherMapで有効なAPIキーを取得してください。\n"
+                         "https://openweathermap.org/api から無料のAPIキーを発行できます。"
+            }
+        elif response.status_code == 429:
+            return {
+                "error": "API制限に達しました。1分後に再試行してください。"
+            }
+        elif response.status_code == 404:
+            return {
+                "error": f"都市 '{state.city}' が見つかりません。正しい都市名を入力してください。"
+            }
+        
         response.raise_for_status()
         
         weather_data = response.json()
