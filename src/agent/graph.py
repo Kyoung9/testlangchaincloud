@@ -7,6 +7,7 @@ OpenWeatherMap APIを使用しています。
 from __future__ import annotations
 
 import os
+import logging
 from dataclasses import dataclass
 from typing import Any, Dict, TypedDict
 import requests
@@ -17,6 +18,10 @@ from langgraph.graph import StateGraph
 
 # 環境変数を読み込み
 load_dotenv()
+
+# ログ設定
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 # LangSmith 추적 활성화
 os.environ["LANGCHAIN_TRACING_V2"] = "true"
@@ -47,18 +52,25 @@ async def get_weather_info(state: State, config: RunnableConfig) -> Dict[str, An
     
     OpenWeatherMap APIを使用して現在の天気情報を取得します。
     """
+    # 入力された都市名をログに出力
+    logger.info(f"入力された都市名: '{state.city}'")
+    
     configuration = config.get("configurable", {})
     api_key = configuration.get("api_key") or os.getenv("OPENWEATHER_API_KEY")
     
     if not api_key:
+        logger.error("OpenWeatherMap APIキーが設定されていません")
         return {
             "error": "OpenWeatherMap APIキーが設定されていません。環境変数OPENWEATHER_API_KEYを設定するか、設定でapi_keyを指定してください。"
         }
     
     if not state.city:
+        logger.warning("都市名が入力されていません")
         return {
             "error": "都市名が入力されていません。"
         }
+    
+    logger.info(f"都市 '{state.city}' の天気情報を取得中...")
     
     try:
         # OpenWeatherMap APIから天気情報を取得
@@ -74,15 +86,18 @@ async def get_weather_info(state: State, config: RunnableConfig) -> Dict[str, An
         
         # APIキーの検証
         if response.status_code == 401:
+            logger.error(f"APIキーが無効です: {response.status_code}")
             return {
                 "error": "APIキーが無効です。OpenWeatherMapで有効なAPIキーを取得してください。\n"
                          "https://openweathermap.org/api から無料のAPIキーを発行できます。"
             }
         elif response.status_code == 429:
+            logger.warning(f"API制限に達しました: {response.status_code}")
             return {
                 "error": "API制限に達しました。1分後に再試行してください。"
             }
         elif response.status_code == 404:
+            logger.warning(f"都市 '{state.city}' が見つかりません: {response.status_code}")
             return {
                 "error": f"都市 '{state.city}' が見つかりません。正しい都市名を入力してください。"
             }
@@ -90,6 +105,7 @@ async def get_weather_info(state: State, config: RunnableConfig) -> Dict[str, An
         response.raise_for_status()
         
         weather_data = response.json()
+        logger.info(f"都市 '{state.city}' の天気情報を正常に取得しました")
         
         # 天気情報を整形
         weather_info = {
@@ -110,14 +126,17 @@ async def get_weather_info(state: State, config: RunnableConfig) -> Dict[str, An
         }
         
     except requests.exceptions.RequestException as e:
+        logger.error(f"APIリクエストエラー: {str(e)}")
         return {
             "error": f"APIリクエストエラー: {str(e)}"
         }
     except KeyError as e:
+        logger.error(f"APIレスポンスの解析エラー: {str(e)}")
         return {
             "error": f"APIレスポンスの解析エラー: {str(e)}"
         }
     except Exception as e:
+        logger.error(f"予期しないエラー: {str(e)}")
         return {
             "error": f"予期しないエラー: {str(e)}"
         }
