@@ -1,6 +1,6 @@
 # 天気情報取得 LangGraph プロジェクト
 
-[![CI](https://github.com/langchain-ai/new-langgraph-project/actions/workflows/unit-tests.yml/badge.svg)](https://github.com/langchain-ai/new-langgraph-project/actions/workflows/unit-tests.yml)
+[![CI](https://github.com/langchain-ai/new-langgraph-project/actions/workflows/unit-tests.yml/badge.svg)](https://github.com/langchain-ai/new-langgraph-project/actions/workflows/integration-tests.yml)
 [![Integration Tests](https://github.com/langchain-ai/new-langgraph-project/actions/workflows/integration-tests.yml/badge.svg)](https://github.com/langchain-ai/new-langgraph-project/actions/workflows/integration-tests.yml)
 
 このプロジェクトは、[LangGraph](https://github.com/langchain-ai/langgraph)を使用して実装された天気情報取得アプリケーションです。[LangGraph Server](https://langchain-ai.github.io/langgraph/concepts/langgraph_server/#langgraph-server)の使用方法と[LangGraph Studio](https://langchain-ai.github.io/langgraph/concepts/langgraph_studio/)での視覚的デバッグを学ぶために設計されています。
@@ -9,18 +9,19 @@
   <img src="./static/studio_ui.png" alt="Graph view in LangGraph studio UI" width="75%" />
 </div>
 
-`src/agent/graph.py`で定義されたコアロジックは、都市名を入力として受け取り、OpenWeatherMap APIから現在の天気情報を取得する単一ステップのアプリケーションです。
+`src/agent/graph.py`で定義されたコアロジックは、自然言語の入力から都市名を抽出し、OpenWeatherMap APIから現在の天気情報を取得する2段階のアプリケーションです。
 
 このグラフを拡張して、より複雑なエージェントワークフローを構築し、LangGraph Studioで視覚化・デバッグすることができます。
 
 ## 機能
 
-- 🌍 都市名を入力して天気情報を取得
+- 🌍 自然言語 입력으로 도시명 자동 추출
 - 🌡️ 気温、体感温度、湿度、気圧などの詳細情報
 - 🌪️ 風速、視界などの気象データ
 - 🌐 日本語での天気説明
 - ⚡ 非同期処理による高速なAPI呼び出し
 - 🔧 設定可能なAPIキー
+- 🤖 LLM을 사용한 지능형 도시명 인식
 
 ## セットアップ
 
@@ -33,20 +34,22 @@ cd path/to/your/app
 pip install -e . "langgraph-cli[inmem]"
 ```
 
-### 2. OpenWeatherMap APIキーの設定
+### 2. APIキーの設定
 
-1. [OpenWeatherMap](https://openweathermap.org/api)で無料アカウントを作成し、APIキーを取得
-2. 環境変数ファイルを作成
+1. **OpenWeatherMap APIキー**: [OpenWeatherMap](https://openweathermap.org/api)で無料アカウントを作成し、APIキーを取得
+2. **OpenAI APIキー**: [OpenAI](https://platform.openai.com/api-keys)でAPIキーを取得
+3. 環境変数ファイルを作成
 
 ```bash
 cp .env.example .env
 ```
 
-3. `.env`ファイルに実際のAPIキーを設定
+4. `.env`ファイルに実際のAPIキーを設定
 
 ```text
 # .env
-OPENWEATHER_API_KEY=your_actual_api_key_here
+OPENWEATHER_API_KEY=your_actual_openweather_api_key_here
+OPENAI_API_KEY=your_actual_openai_api_key_here
 ```
 
 ### 3. LangGraph Serverの起動
@@ -65,7 +68,13 @@ LangGraph Serverの詳細については[こちら](https://langchain-ai.github.
 python example_usage.py
 ```
 
-都市名を入力すると、その都市の現在の天気情報が表示されます。
+자연어로 질문하면 자동으로 도시명을 추출하고 날씨 정보를 표시합니다.
+
+**입력 예시:**
+- "도쿄의 날씨는 어떤가요?"
+- "how's the weather in Tokyo?"
+- "서울 날씨 알려줘"
+- "What's the weather like in Paris?"
 
 ### プログラムでの使用
 
@@ -73,11 +82,12 @@ python example_usage.py
 import asyncio
 from src.agent.graph import graph, State
 
-async def get_weather(city: str):
-    initial_state = State(city=city)
+async def get_weather(user_input: str):
+    initial_state = State(user_input=user_input)
     config = {
         "configurable": {
-            "api_key": "your_api_key"
+            "openai_api_key": "your_openai_api_key",
+            "api_key": "your_openweather_api_key"
         }
     }
     
@@ -85,11 +95,23 @@ async def get_weather(city: str):
     return result
 
 # 使用例
-weather = await get_weather("Tokyo")
+weather = await get_weather("도쿄의 날씨는 어떤가요?")
 print(weather)
 ```
 
-## カスタマイズ方法
+## アーキテクチャ
+
+### 1. 도시명 추출 단계 (extract_city)
+- LLM을 사용하여 자연어 입력에서 도시명 추출
+- 한국어, 영어 등 다양한 언어 지원
+- 명확한 도시명이 없는 경우 에러 처리
+
+### 2. 날씨 정보 조회 단계 (get_weather)
+- 추출된 도시명으로 OpenWeatherMap API 호출
+- 상세한 날씨 정보 반환
+- API 에러 및 예외 상황 처리
+
+## カスタマイ즈方法
 
 ### 1. 設定可能なパラメータの定義
 
@@ -112,8 +134,9 @@ LangGraph Studioは[LangSmith](https://smith.langchain.com/)と統合されて�
 ## 注意事項
 
 - OpenWeatherMap APIは無料プランで1分間に60回のリクエスト制限があります
+- OpenAI API는 사용량에 따라 요금이 부과됩니다
 - APIキーは機密情報なので、`.env`ファイルに保存し、Gitにコミットしないでください
-- 都市名は英語で入力することを推奨します（例: "Tokyo", "New York", "London"）
+- 한국어, 영어 등 다양한 언어로 입력 가능합니다
 
 <!--
 Configuration auto-generated by `langgraph template lock`. DO NOT EDIT MANUALLY.
@@ -125,6 +148,10 @@ Configuration auto-generated by `langgraph template lock`. DO NOT EDIT MANUALLY.
         "api_key": {
           "type": "string",
           "description": "OpenWeatherMap APIキー"
+        },
+        "openai_api_key": {
+          "type": "string",
+          "description": "OpenAI APIキー"
         }
       }
     }
