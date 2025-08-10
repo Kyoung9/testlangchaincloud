@@ -16,19 +16,19 @@ async def main():
     """メイン関数"""
     print("🌤️  天気情報取得システム")
     print("=" * 50)
-    print("💡 自然言語で都市의 날씨를 물어보세요!")
-    print("예시:")
-    print("  - '도쿄의 날씨는 어떤가요?'")
+    print("💡 自然言語で都市の天気を聞いてみてください！")
+    print("例:")
+    print("  - '도쿄の 날씨는 어떤가요?'")
     print("  - 'how's the weather in Tokyo?'")
     print("  - '서울 날씨 알려줘'")
     print("  - 'What's the weather like in Paris?'")
     print()
     
     # 自然言語の入力を取得
-    user_input = input("질문을 입력하세요: ").strip()
+    user_input = input("質問を入力してください: ").strip()
     
     if not user_input:
-        print("❌ 입력이 없습니다.")
+        print("❌ 入力がありません。")
         return
     
     # 初期状態を作成
@@ -36,9 +36,9 @@ async def main():
     
     try:
         # グラフを実行
-        print(f"\n🔍 입력을 분석하고 날씨 정보를 가져오는 중...")
+        print(f"\n🔍 入力を分析して天気情報を取得中...")
         
-        # API키를 설정으로 전달（환경변수에서 가져옴）
+        # APIキーを設定で渡す（環境変数から取得）
         config = {
             "configurable": {
                 "openai_api_key": os.getenv("OPENAI_API_KEY"),
@@ -50,22 +50,22 @@ async def main():
         
         # 結果を表示
         if result.get("error"):
-            print(f"❌ 에러: {result['error']}")
+            print(f"❌ エラー: {result['error']}")
         elif result.get("weather_info"):
             weather = result["weather_info"]
-            print(f"\n✅ {weather['city']}, {weather['country']}의 날씨 정보:")
-            print(f"🌡️  기온: {weather['temperature']}")
-            print(f"🌡️  체감온도: {weather['feels_like']}")
-            print(f"💧 습도: {weather['humidity']}")
-            print(f"🌪️  풍속: {weather['wind_speed']}")
-            print(f"👁️  가시거리: {weather['visibility']}")
-            print(f"📊 기압: {weather['pressure']}")
-            print(f"☁️  날씨: {weather['description']}")
+            print(f"\n✅ {weather['city']}, {weather['country']}の天気情報:")
+            print(f"🌡️  気温: {weather['temperature']}")
+            print(f"🌡️  体感温度: {weather['feels_like']}")
+            print(f"💧 湿度: {weather['humidity']}")
+            print(f"🌪️  風速: {weather['wind_speed']}")
+            print(f"👁️  視界: {weather['visibility']}")
+            print(f"📊 気圧: {weather['pressure']}")
+            print(f"☁️  天気: {weather['description']}")
         else:
-            print("❌ 예상치 못한 결과가 반환되었습니다.")
+            print("❌ 予期しない結果が返されました。")
             
     except Exception as e:
-        print(f"❌ 에러가 발생했습니다: {str(e)}")
+        print(f"❌ エラーが発生しました: {str(e)}")
 
 if __name__ == "__main__":
     # 非同期関数を実行
