@@ -1,0 +1,185 @@
+"""
+title: LangGraph Universal Caller
+author: you
+version: 0.3.0
+description: Call a local or cloud LangGraph assistant (auto-detect). Supports configurable keys (OpenAI / OpenWeather).
+requirements: langgraph-sdk
+"""
+
+import os
+from typing import List, Optional
+from pydantic import BaseModel, Field
+from langgraph_sdk import get_client
+
+
+def _is_local(url: str) -> bool:
+    if not url:
+        return True
+    url_l = url.lower()
+    return any(
+        k in url_l
+        for k in ["localhost", "127.0.0.1", "0.0.0.0", "host.docker.internal"]
+    )
+
+
+class Tools:
+    class Valves(BaseModel):
+        # 서버 접속(로컬/클라우드 공통)
+        api_url: str = Field(
+            default=os.getenv("LANGGRAPH_API_URL", "http://localhost:8123"),
+            description="LangGraph Server URL (e.g. http://localhost:8123 or your cloud URL)",
+        )
+        assistant_id: str = Field(
+            default=os.getenv("LANGGRAPH_ASSISTANT_ID", "agent"),
+            description="Assistant/graph id (default: agent)",
+        )
+        # 클라우드 접근용 키(로컬이면 없어도 동작)
+        api_key: str = Field(
+            default=os.getenv("LANGGRAPH_API_KEY", ""),
+            description="LangSmith/LangGraph API key (cloud only). Leave empty for local.",
+        )
+        # 에이전트가 configurable로 기대하는 키들(선택)
+        openai_api_key: str = Field(
+            default=os.getenv("OPENAI_API_KEY", ""),
+            description="config.configurable.openai_api_key",
+        )
+        openweather_api_key: str = Field(
+            default=os.getenv("OPENWEATHER_API_KEY", ""),
+            description="config.configurable.api_key (OpenWeatherMap key)",
+        )
+        # 입력 보조 옵션(선택)
+        city_hint: str = Field(
+            default="",
+            description="명시 도시명(예: Tokyo). 그래프가 city 키를 볼 때 사용",
+        )
+
+    def __init__(self):
+        self.valves = self.Valves()
+
+    async def run_langgraph(
+        self,
+        prompt: str,
+        stream_mode: str = "messages-tuple",
+        __event_emitter__=None,
+    ) -> str:
+        """
+        로컬/클라우드 LangGraph에 프롬프트를 전송하고 응답을 반환합니다.
+        stream_mode: values | messages | messages-tuple | updates | debug | events ...
+        """
+        api_url = self.valves.api_url.strip()
+        if not api_url:
+            return "Set api_url in Tool valves."
+
+        # 로컬이면 키 없이, 클라우드면 키를 사용
+        use_key = (
+            (self.valves.api_key or "").strip() if not _is_local(api_url) else None
+        )
+        client = get_client(url=api_url, api_key=use_key or None)
+
+        # 입력(payload): messages + query(+ city)
+        payload = {
+            "messages": [{"role": "user", "content": prompt}],
+            "query": prompt,
+        }
+        if self.valves.city_hint:
+            payload["city"] = self.valves.city_hint
+
+            # configurable 키(있을 때만 전달)
+        configurable = {}
+        if self.valves.openai_api_key:
+            configurable["openai_api_key"] = self.valves.openai_api_key
+        if self.valves.openweather_api_key:
+            configurable["api_key"] = self.valves.openweather_api_key
+
+        # ✅ messages 조각 + 최종 state(values) 둘 다 수집
+        final_chunks: List[str] = []
+        last_values = {}
+
+        # ✅ values도 함께 받도록 스트림 모드 확장
+        requested_mode = stream_mode
+        if isinstance(stream_mode, str):
+            requested_mode = ["messages", "values"]
+
+        try:
+            async for ev in client.runs.stream(
+                None,  # threadless stateless run
+                self.valves.assistant_id,
+                input=payload,
+                config={"configurable": configurable} if configurable else None,
+                stream_mode=requested_mode,
+            ):
+                # 진행상태 표시
+                if __event_emitter__:
+                    await __event_emitter__(
+                        {
+                            "type": "status",
+                            "data": {"description": ev.event, "done": False},
+                        }
+                    )
+
+                if ev.event == "messages":
+                    chunk, _meta = ev.data
+                    content = chunk.get("content")
+                    if content:
+                        final_chunks.append(content)
+                        if __event_emitter__:
+                            await __event_emitter__(
+                                {"type": "message", "data": {"content": content}}
+                            )
+
+                elif ev.event == "values":
+                    # 그래프 state 스냅샷 누적 (예: {"city": "...", "weather_info": {...}, "error": ""})
+                    try:
+                        if isinstance(ev.data, dict):
+                            last_values.update(ev.data)
+                        elif (
+                            isinstance(ev.data, list)
+                            and ev.data
+                            and isinstance(ev.data[-1], dict)
+                        ):
+                            last_values.update(ev.data[-1])
+                    except Exception:
+                        pass
+
+            # ✅ 반환 우선순위: error > weather_info 요약 > messages 합본 > 완료문
+            err = (
+                (last_values.get("error") or "").strip()
+                if isinstance(last_values, dict)
+                else ""
+            )
+            if err:
+                return f"⚠️ {err}"
+
+            wi = (
+                last_values.get("weather_info")
+                if isinstance(last_values, dict)
+                else None
+            )
+            city = last_values.get("city") if isinstance(last_values, dict) else None
+            wi = last_values.get("weather_info")
+            if wi is not None:
+                try:
+                    import json
+
+                    return json.dumps(wi, ensure_ascii=False, indent=2)
+                except Exception:
+                    # dict가 아니거나 직렬화 실패 시 그냥 str로
+                    return str(wi)
+
+            # weather_info가 없으면 messages 스트림 합본 사용
+            if final_chunks:
+                return "".join(final_chunks)
+
+            return "✅ LangGraph run completed."
+        except Exception as e:
+            if __event_emitter__:
+                await __event_emitter__(
+                    {
+                        "type": "status",
+                        "data": {
+                            "description": f"Error: {type(e).__name__}: {e}",
+                            "done": True,
+                        },
+                    }
+                )
+            return f"LangGraph error: {type(e).__name__}: {e}"
